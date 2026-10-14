@@ -22,6 +22,7 @@ import OnboardingScoreCard from './components/OnboardingScoreCard'
 import ReadmeGeneratorTab from './components/ReadmeGeneratorTab'
 import LineByLineAnalysis from './components/LineByLineAnalysis'
 import TimeMachineTab from './components/TimeMachineTab'
+import VoiceAssistant from './components/VoiceAssistant'
 import { Compass, Terminal, ShieldAlert, Sun, Moon } from 'lucide-react'
 import Lenis from 'lenis'
 import InteractiveBackground from './components/ui/InteractiveBackground'
@@ -184,7 +185,7 @@ function DashboardPage() {
       <div className="flex-1 flex flex-col min-w-0 h-screen overflow-hidden">
         <Navbar onToggleMobileMenu={() => setMobileMenuOpen(true)} />
         
-        <main className="flex-grow p-4 md:p-6 overflow-y-auto bg-transparent relative">
+        <main data-voice-scroll className="flex-grow p-4 md:p-6 overflow-y-auto bg-transparent relative">
           
           <AnimatePresence mode="wait">
             <motion.div
@@ -279,8 +280,8 @@ export default function App() {
             <Route path="/" element={<LandingPage />} />
             <Route path="/login" element={<LoginPage />} />
             <Route path="/profile" element={<ProfilePage />} />
-            <Route path="/repo/:owner/:repo" element={<DashboardPage />} />
-            <Route path="/repo/:owner/:repo/analyze" element={<LineByLineAnalysis />} />
+            <Route path="/repo/:owner/:repo" element={<><DashboardPage /><VoiceAssistant /></>} />
+            <Route path="/repo/:owner/:repo/analyze" element={<><LineByLineAnalysis /><VoiceAssistant /></>} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         )}

@@ -84,6 +84,10 @@ function extractEnvVars(tree, content, filePath) {
       const linesBefore = fileContent.substring(0, match.index).split('\n');
       const line = linesBefore.length;
 
+      // Skip mentions inside comments ("// process.env.VAR_NAME", " * ...", "# ...")
+      const lineStart = linesBefore[linesBefore.length - 1];
+      if (/^\s*(\/\/|\*|\/\*|#)/.test(lineStart) || /\/\/.*$/.test(lineStart.replace(/(['"`]).*?\1/g, '').replace(/https?:\/\//g, ''))) continue;
+
       // Track unique env vars per file
       const key = `${name}:${filePath}`;
       if (seen.has(key)) continue;

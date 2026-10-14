@@ -45,9 +45,10 @@ Configure the following variables in `server/.env`:
 | `PORT` | No | `3001` | Backend HTTP server port |
 | `CORS_ORIGIN` | No | `http://localhost:5173` | Allowed CORS origins |
 | `GITHUB_TOKEN` | Yes | - | GitHub Personal Access Token for API rate limit (5,000 req/hr) |
-| `AI_PROVIDER` | No | `openrouter` | Primary AI provider (openrouter or gemini) |
-| `OPENROUTER_API_KEY` | No | - | OpenRouter API Key for AI features |
-| `GEMINI_API_KEY` | No | - | Gemini API Key for AI features |
+| `GEMINI_API_KEY` | One of these | - | Google AI Studio key; runs Gemma 4 (`gemma-4-31b-it`) |
+| `OPENROUTER_API_KEY` | One of these | - | OpenRouter key; runs Gemma 4 (`google/gemma-4-31b-it`) |
+| `OLLAMA_URL` | One of these | - | Local Ollama server; runs Gemma 4 locally (`gemma4:e4b`) |
+| `GEMMA_MODEL` / `GEMMA_FAST_MODEL` | No | `gemma-4-31b-it` / `gemma-4-26b-a4b-it` | Gemma 4 models for long and short tasks |
 
 ## Time Machine (Gemma 4)
 
@@ -65,8 +66,25 @@ Every file has a story. In **Important Files**, expand a file and click **Tell t
 
 Gemma is reached through the first configured backend: `GEMINI_API_KEY` (model `gemma-4-31b-it`), `OPENROUTER_API_KEY` (model `google/gemma-4-31b-it`) or a local `OLLAMA_URL` (model `gemma4:e4b`). Override with `GEMMA_BACKEND`, `GEMMA_MODEL` and `GEMMA_OLLAMA_MODEL`. Run the server tests with `cd server && npm test`.
 
+## Voice assistant (Gemma 4)
+
+A floating mic button (bottom right, or **Alt+V**) on the dashboard and the Detailed Analysis page.
+
+- **Explain this page**: a spoken walkthrough of whatever page is open, written by Gemma 4 from that page's analysis data, with live captions and word highlighting. On the Detailed Analysis page it explains the file.
+- **Guided tour**: "give me a tour" walks through Overview, Setup Guide, Architecture, APIs, Env Variables, Security, Onboarding Score and Time Machine, navigating and narrating each page (skip / end controls; the next page's script is prefetched while the current one plays).
+- **Navigation and actions**: "open the security audit", "tell me the story of authController", "analyze orders.js", "back to the dashboard". Common commands are matched instantly in the browser; anything else (questions, fuzzy requests) goes to Gemma 4, which can also trigger actions. Every action Gemma proposes is checked against real pages and analysed files on the server.
+- **Questions**: "how do I run this project?" gets a short spoken answer from the analysis.
+- **English and Hindi**, voice and speed settings, hands-free mode, pause / resume / repeat, Esc to stop.
+- If Gemma 4 is unavailable, page explanations fall back to scripts built from the analysis facts, so the tour still works.
+
+Speech uses the browser's Web Speech APIs: speaking works in all modern browsers; listening works in Chrome, Edge and Safari (Chrome sends audio to Google's speech service). Other browsers can type commands in the panel. Endpoints: `POST /api/voice/narrate`, `POST /api/voice/command`.
+
+## AI: Gemma 4 everywhere
+
+Every AI feature runs on Gemma 4 through one provider (`server/src/services/ai/providers/GemmaProvider.js`): detailed file analysis, AI file descriptions, the AI Assistant, executive summary, security review, API explanations, README generation and the Time Machine. `GET /api/ai/status` shows which Gemma backend and model the server will use. Users can bring their own Google AI Studio or OpenRouter key in API Key Settings; it is used to call Gemma 4. If Gemma is unavailable, features fall back to RepoPilot's rule-based static analysis and say so (set `GEMMA_STRICT=true` to turn that off).
+
 ## Tech Stack
 
 - **Frontend**: React 19, Vite, Tailwind CSS, Lucide React, Framer Motion, Zustand
 - **Backend**: Node.js, Express 5, Octokit, Babel Parser, LRU Cache
-- **AI Integrations**: OpenRouter, Google Gemini 2.0 Flash
+- **AI**: Gemma 4 for every AI feature (31B for analysis, chat, README and Time Machine; 26B A4B for short tasks), served via Google AI Studio, OpenRouter or a local Ollama server

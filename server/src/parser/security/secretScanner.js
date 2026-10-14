@@ -1,3 +1,5 @@
+const { isTestOrFixturePath } = require('../../utils/filterFiles');
+
 /**
  * Secret Scanner
  * Deterministic Regex-based scanner for exposed secrets in codebase.
@@ -9,12 +11,14 @@ const SECRET_PATTERNS = [
   { type: 'OpenAI Key', regex: /sk-[A-Za-z0-9]{48}/ },
   { type: 'Gemini Key', regex: /AIza[0-9A-Za-z-_]{35}/ },
   { type: 'AWS Access Key', regex: /AKIA[0-9A-Z]{16}/ },
-  { type: 'AWS Secret Key', regex: /(?<![A-Za-z0-9/+=])[A-Za-z0-9/+=]{40}(?![A-Za-z0-9/+=])/ }, // Less accurate, maybe just match aws_secret_access_key?
+  // Any 40-char base64 run matched hashes, SHAs and paths; only flag it next to an AWS secret name.
+  { type: 'AWS Secret Key', regex: /aws.{0,20}(secret|key).{0,10}[:=]\s*['"]?[A-Za-z0-9/+=]{40}(?![A-Za-z0-9/+=])/i },
   { type: 'Google API Key', regex: /AIza[0-9A-Za-z\-_]{35}/ },
-  { type: 'Bearer Token', regex: /Bearer\s+[A-Za-z0-9\-\._~+\/]+=*/ },
+  { type: 'Bearer Token', regex: /Bearer\s+[A-Za-z0-9\-._~+/]{24,}=*/ },
   { type: 'Private RSA Key', regex: /-----BEGIN RSA PRIVATE KEY-----/ },
   { type: 'SSH Key', regex: /-----BEGIN OPENSSH PRIVATE KEY-----/ },
-  { type: 'MongoDB URI', regex: /mongodb(?:\+srv)?:\/\/[^\s]+/ },
+  // Only URIs that carry a username and password.
+  { type: 'MongoDB URI', regex: /mongodb(?:\+srv)?:\/\/[^\s:@/'"]+:[^\s@/'"]+@[^\s'"]+/ },
   { type: 'Postgres/DB URL', regex: /(postgres|mysql|redis):\/\/[a-zA-Z0-9_-]+:[a-zA-Z0-9_-]+@[a-zA-Z0-9_.-]+/ },
   { type: 'Stripe Key', regex: /(sk_live|rk_live)_[0-9a-zA-Z]{24}/ },
   { type: 'Slack Token', regex: /xox[baprs]-[0-9]{12}-[0-9]{12}-[a-zA-Z0-9]{24}/ },
@@ -29,8 +33,9 @@ function scanSecrets(filesWithContent) {
   for (const file of filesWithContent) {
     if (!file.content || file.content.trim() === '') continue;
 
-    // Skip obviously safe files
+    // Skip obviously safe files: lockfiles, docs, and test fixtures (fake keys by design)
     if (file.path.endsWith('package-lock.json') || file.path.endsWith('.svg')) continue;
+    if (/\.(md|mdx|rst|txt|adoc)$/i.test(file.path) || isTestOrFixturePath(file.path)) continue;
 
     const lines = file.content.split('\n');
 
@@ -41,10 +46,11 @@ function scanSecrets(filesWithContent) {
       for (const pattern of SECRET_PATTERNS) {
         if (pattern.regex.test(line)) {
           
-          // Basic false-positive filtering
-          if (line.toLowerCase().includes('example') || line.toLowerCase().includes('test')) {
-            continue;
-          }
+          // Basic false-positive filtering: examples, tests, placeholders, template values
+          // and the patterns themselves (regex definitions in scanners/linters).
+          const lower = line.toLowerCase();
+          if (lower.includes('example') || lower.includes('test') || /your[_-]|xxx|placeholder|<[a-z_]+>|\$\{|process\.env/i.test(line)) continue;
+          if (/regex\s*:|new RegExp\(|\/\^?\(?\??[A-Za-z(]*-----BEGIN/.test(line)) continue;
 
           secretsFound.push({
             severity: 'critical',

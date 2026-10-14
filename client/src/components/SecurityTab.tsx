@@ -24,7 +24,7 @@ interface Vulnerability {
 }
 
 export default function SecurityTab() {
-  const { analysis, aiSecurityReview, isAiSecurityReviewLoading, fetchAiSecurityReview, analyzedRepo } = useRepoStore()
+  const { analysis, aiSecurityReview, isAiSecurityReviewLoading, aiSecurityReviewError, fetchAiSecurityReview, analyzedRepo } = useRepoStore()
   const [filterCategory, setFilterCategory] = useState<string>('All')
   const [expandedCards, setExpandedCards] = useState<Record<string, boolean>>({})
 
@@ -188,8 +188,10 @@ export default function SecurityTab() {
                 <p className="text-sm text-[var(--text-primary)] font-sans leading-relaxed">
                   {aiSecurityReview}
                 </p>
+              ) : aiSecurityReviewError ? (
+                <p className="text-xs text-[var(--text-secondary)]" title={aiSecurityReviewError}>Gemma 4 could not write the review just now. Press Generate Review to try again.</p>
               ) : (
-                <p className="text-xs text-[var(--text-secondary)]">Run an AI analysis to get a summarized DevSecOps perspective.</p>
+                <p className="text-xs text-[var(--text-secondary)]">Get a short Gemma 4 review of this repository's security scan.</p>
               )}
             </div>
           </div>

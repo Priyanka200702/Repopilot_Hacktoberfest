@@ -12,6 +12,7 @@ const readmeRoutes = require('./routes/readme');
 const explorerRoutes = require('./routes/explorer');
 const aiRoutes = require('./routes/ai');
 const timeMachineRoutes = require('./routes/timeMachine');
+const voiceRoutes = require('./routes/voice');
 
 const app = express();
 
@@ -40,6 +41,7 @@ app.use('/api/readme', readmeRoutes);
 app.use('/api/explorer', explorerRoutes);
 app.use('/api/ai', aiRoutes);
 app.use('/api/time-machine', timeMachineRoutes);
+app.use('/api/voice', voiceRoutes);
 
 // Health check
 app.get('/health', (req, res) => {

@@ -314,9 +314,9 @@ export default function ApiRoutesTab() {
                                   {expState.data}
                                 </p>
                               ) : expState?.error ? (
-                                <p className="text-xs text-red-400">Error: {expState.error}</p>
+                                <p className="text-xs text-[var(--text-secondary)]" title={expState.error}>Gemma 4 could not explain this endpoint just now. Press Generate to try again.</p>
                               ) : (
-                                <p className="text-[10px] text-[var(--text-secondary)] italic">Generate an AI explanation for this specific endpoint.</p>
+                                <p className="text-[10px] text-[var(--text-secondary)] italic">Generate a Gemma 4 explanation for this endpoint.</p>
                               )}
                             </div>
                           </div>

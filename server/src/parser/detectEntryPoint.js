@@ -15,6 +15,49 @@ const COMMON_ENTRY_FILES = [
   'src/main/java/Application.java'
 ];
 
+const SERVER_DIR = /^(server|backend|api|apps\/(api|server|backend))$/i;
+
+function scriptEntry(pkg) {
+  const out = [];
+  const scripts = (pkg && pkg.scripts) || {};
+  for (const script of [scripts.start, scripts.dev, scripts.serve]) {
+    const m = String(script || '').match(/(?:node|ts-node|nodemon|tsx|npx\s+ts-node|bun)\s+(?:--[\w-]+(?:=\S+)?\s+)*([^\s&|;]+\.(?:js|cjs|mjs|ts))/);
+    if (m) out.push({ file: m[1].replace(/^\.\//, ''), how: 'scripts' });
+  }
+  if (pkg && typeof pkg.main === 'string') out.push({ file: pkg.main.replace(/^\.\//, ''), how: 'main' });
+  return out;
+}
+
+/**
+ * Monorepos (client/ + server/ with no root package.json) were falling through to
+ * "first file that calls .listen()". Look at each sub-package's own package.json,
+ * backend folders first, and its common entry files.
+ */
+function detectInSubPackages(filesWithContent, filePaths) {
+  const pkgs = filesWithContent
+    .filter(f => /^[^/]+(\/[^/]+)?\/package\.json$/.test(f.path))
+    .map(f => ({ dir: f.path.replace(/\/package\.json$/, ''), content: f.content }))
+    .sort((a, b) => (SERVER_DIR.test(b.dir) ? 1 : 0) - (SERVER_DIR.test(a.dir) ? 1 : 0) || a.dir.length - b.dir.length);
+  for (const { dir, content } of pkgs) {
+    let pkg = null;
+    try { pkg = JSON.parse(content); } catch (_) { continue; }
+    for (const { file, how } of scriptEntry(pkg)) {
+      const full = `${dir}/${file}`;
+      if (filePaths.includes(full)) {
+        return { file: full, line: 1, confidence: 'high', reason: `${dir}/package.json ${how === 'main' ? '"main" field' : 'scripts'} points to "${file}"`, githubUrl: '' };
+      }
+    }
+  }
+  for (const { dir } of pkgs) {
+    for (const common of COMMON_ENTRY_FILES) {
+      if (filePaths.includes(`${dir}/${common}`)) {
+        return { file: `${dir}/${common}`, line: 1, confidence: 'medium', reason: `Common entry file in ${dir}/: "${common}"`, githubUrl: '' };
+      }
+    }
+  }
+  return null;
+}
+
 function detectEntryPoint(filesWithContent, packageJson) {
   const filePaths = filesWithContent.map(f => f.path);
 
@@ -99,19 +142,22 @@ function detectEntryPoint(filesWithContent, packageJson) {
     }
   }
 
-  // 5. Heuristic: look for files that contain .listen() or createServer
-  for (const file of filesWithContent) {
-    if (file.path.endsWith('.js') || file.path.endsWith('.ts')) {
-      if (file.content.match(/\.(listen|createServer)\s*\(/)) {
-        return {
-          file: file.path,
-          line: 1,
-          confidence: 'medium',
-          reason: `File contains server initialization (.listen() or createServer)`,
-          githubUrl: ''
-        };
-      }
-    }
+  // 4.5 Monorepo sub-packages (server/package.json, apps/api/package.json, ...)
+  const sub = detectInSubPackages(filesWithContent, filePaths);
+  if (sub) return sub;
+
+  // 5. Heuristic: files that start a server, shallowest path first
+  const servers = filesWithContent
+    .filter(f => /\.(c|m)?(js|ts)$/.test(f.path) && /\.(listen|createServer)\s*\(/.test(f.content || ''))
+    .sort((a, b) => a.path.split('/').length - b.path.split('/').length || a.path.length - b.path.length);
+  if (servers.length) {
+    return {
+      file: servers[0].path,
+      line: 1,
+      confidence: 'medium',
+      reason: `File contains server initialization (.listen() or createServer)`,
+      githubUrl: ''
+    };
   }
 
   // 6. Fallback

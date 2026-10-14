@@ -358,3 +358,22 @@ html.lenis, html.lenis body { height: auto; }
 .react-flow__controls-button:last-child {
   border-bottom: none !important;
 }
+
+/* Voice assistant spotlight: the part of the page currently being explained */
+.voice-spotlight {
+  position: relative;
+  outline: 2px solid rgb(34 211 238 / 0.9);
+  outline-offset: 4px;
+  border-radius: 12px;
+  box-shadow: 0 0 0 6px rgb(34 211 238 / 0.12), 0 0 28px rgb(34 211 238 / 0.35);
+  transition: outline-color 0.3s ease, box-shadow 0.3s ease;
+  animation: voice-spotlight-pulse 1.8s ease-in-out infinite;
+  scroll-margin: 96px;
+}
+@keyframes voice-spotlight-pulse {
+  0%, 100% { box-shadow: 0 0 0 6px rgb(34 211 238 / 0.10), 0 0 22px rgb(34 211 238 / 0.25); }
+  50% { box-shadow: 0 0 0 8px rgb(34 211 238 / 0.18), 0 0 36px rgb(34 211 238 / 0.45); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .voice-spotlight { animation: none; }
+}

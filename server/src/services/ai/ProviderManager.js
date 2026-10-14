@@ -1,48 +1,43 @@
 const crypto = require('crypto');
-const cache = require('../cache');
+const { LRUCache } = require('lru-cache');
 
-const GeminiProvider = require('./providers/GeminiProvider');
-const OpenRouterProvider = require('./providers/OpenRouterProvider');
-const OpenAIProvider = require('./providers/OpenAIProvider');
-const AnthropicProvider = require('./providers/AnthropicProvider');
-const KalavaiProvider = require('./providers/KalavaiProvider');
-const LocalProvider = require('./providers/LocalProvider');
-const MockProvider = require('./providers/MockProvider');
+const BaseProvider = require('./providers/BaseProvider');
 const GemmaProvider = require('./providers/GemmaProvider');
+const MockProvider = require('./providers/MockProvider');
+
+/**
+ * Routes every AI call in RepoPilot to Gemma 4.
+ *
+ * Gemma 4 is the only AI model. If Gemma is not configured or fails, features
+ * that have a rule-based fallback (MockProvider: static analysis, no AI model)
+ * degrade to it so the app keeps working, and the response says so
+ * (provider: 'mock'). Set GEMMA_STRICT=true to disable the fallback.
+ * Time Machine and voice methods never fall back here: their routes build their own
+ * facts-only output (Git facts, page facts) when Gemma is unavailable.
+ */
+const NO_FALLBACK = new Set(['generateFileStory', 'generateRepoEvolution', 'generateVoiceNarration', 'generateVoiceReply']);
+
+// Separate from services/cache.js so AI responses never evict repository analyses.
+const aiCache = new LRUCache({ max: 300, ttl: 1000 * 60 * 60 });
+
+function implementsMethod(provider, methodName) {
+  return typeof provider[methodName] === 'function' && provider[methodName] !== BaseProvider.prototype[methodName];
+}
 
 class ProviderManager {
   constructor() {
-    this.providers = {
-      gemini: new GeminiProvider(),
-      openrouter: new OpenRouterProvider(),
-      openai: new OpenAIProvider(),
-      anthropic: new AnthropicProvider(),
-      kalavai: new KalavaiProvider(),
-      local: new LocalProvider(),
-      gemma: new GemmaProvider(), // used explicitly by the Time Machine
-      mock: new MockProvider()
-    };
+    this.gemma = new GemmaProvider();
+    this.mock = new MockProvider();
+    this.providers = { gemma: this.gemma, mock: this.mock };
+    this.cache = aiCache;
   }
 
-  _getFallbackOrder() {
-    const primary = (process.env.AI_PROVIDER || 'gemini').toLowerCase();
-    // Build a list of providers that have credentials configured
-    const configured = Object.keys(this.providers).filter((provider) => {
-      if (provider === 'openrouter') return Boolean(process.env.OPENROUTER_API_KEY);
-      if (provider === 'openai') return Boolean(process.env.OPENAI_API_KEY);
-      if (provider === 'anthropic') return Boolean(process.env.ANTHROPIC_API_KEY);
-      if (provider === 'gemini') return Boolean(process.env.GEMINI_API_KEY);
-      if (provider === 'kalavai') return Boolean(process.env.KALAVAI_API_KEY);
-      if (provider === 'local') return Boolean(process.env.LOCAL_AI_URL);
-      return false;
-    });
-    // Primary goes first, then all other configured providers, then mock
-    const order = [primary];
-    for (const p of configured) {
-      if (p !== primary) order.push(p);
-    }
-    order.push('mock'); // Always fallback to mock so it never throws
-    return order;
+  isGemmaConfigured(override) {
+    return this.gemma.isConfigured(override);
+  }
+
+  describe(override) {
+    return { provider: 'Gemma 4', ...this.gemma.describe(override) };
   }
 
   _generateCacheKey(methodName, args) {
@@ -50,85 +45,80 @@ class ProviderManager {
     return crypto.createHash('sha256').update(data).digest('hex');
   }
 
+  /**
+   * execute(methodName, ...args[, { key, provider }])
+   * The optional last argument carries the user's own key (BYOK) from the
+   * X-AI-Key / X-AI-Provider headers; it is passed to Gemma as-is.
+   * @returns {Promise<{success: true, data: any, provider: 'gemma'|'mock'} | {success: false, status: number, code: string, message: string}>}
+   */
   async execute(methodName, ...args) {
-    let overrideKey = null;
-    let explicitProvider = null;
-    let cacheArgs = [...args];
-    
-    // Check if the last argument is our override object
-    const lastArg = args[args.length - 1];
-    if (lastArg && typeof lastArg === 'object' && ('key' in lastArg || 'provider' in lastArg)) {
-      overrideKey = lastArg.key;
-      explicitProvider = lastArg.provider;
-      args[args.length - 1] = overrideKey; // Pass only the key string down to the provider methods
-    } else if (typeof lastArg === 'string' && (lastArg.startsWith('sk-') || lastArg.startsWith('AIza'))) {
-      overrideKey = lastArg; // Legacy string override fallback
+    const last = args[args.length - 1];
+    if (last && typeof last === 'object' && ('key' in last || 'provider' in last)) {
+      args[args.length - 1] = { key: last.key || undefined, provider: last.provider || undefined };
+    } else if (typeof last === 'string' && GemmaProvider.inferBackendFromKey(last)) {
+      args[args.length - 1] = { key: last }; // legacy plain-key override
     }
 
-    const cacheKey = this._generateCacheKey(methodName, cacheArgs);
-    
-    if (cache.has(cacheKey)) {
+    const cacheKey = this._generateCacheKey(methodName, args);
+    if (this.cache.has(cacheKey)) {
       console.log(`[AI] Cache Hit | Executing: ${methodName}`);
-      return cache.get(cacheKey);
+      return this.cache.get(cacheKey);
     }
 
-    // If an explicit provider is requested by the user, ONLY try that provider (NO fallback to mock)
-    const order = explicitProvider && this.providers[explicitProvider.toLowerCase()] 
-      ? [explicitProvider.toLowerCase()]
-      : this._getFallbackOrder();
+    const order = ['gemma'];
+    const allowFallback = process.env.GEMMA_STRICT !== 'true' && !NO_FALLBACK.has(methodName);
+    if (allowFallback && implementsMethod(this.mock, methodName)) order.push('mock');
 
-    let lastError = null;
-
-    for (const providerName of order) {
-      const provider = this.providers[providerName];
-      if (!provider) {
-        console.warn(`[AI] Unknown provider: ${providerName}`);
-        continue;
-      }
-
+    let gemmaError = null;
+    for (const name of order) {
+      const provider = this.providers[name];
+      if (!implementsMethod(provider, methodName)) continue;
       try {
         console.log(`[AI] Provider: ${provider.name} | Executing: ${methodName}`);
-        
         const data = await provider[methodName](...args);
-        
         console.log(`[AI] Provider: ${provider.name} | Status: Success`);
-        
-        const result = { success: true, data };
-        cache.set(cacheKey, result);
+        const result = { success: true, data, provider: name };
+        // Only Gemma results are cached, so Gemma is retried once it is available again.
+        if (name === 'gemma') this.cache.set(cacheKey, result);
+        else if (gemmaError) result.fallbackReason = gemmaError.message;
         return result;
-
       } catch (error) {
-        lastError = error;
-        const statusStr = error.status ? error.status : 'Error';
-        console.log(`[AI] Provider: ${provider.name} | Status: ${statusStr} | Detail: ${error.message}`);
-        console.log(`[AI] Switching to next provider...`);
+        if (name === 'gemma') gemmaError = error;
+        console.log(`[AI] Provider: ${provider.name} | Status: ${error.status || 'Error'} | Detail: ${error.message}`);
       }
     }
 
-    console.error(`[AI] All providers failed. Last error:`, lastError?.message);
+    return this._errorResult(gemmaError);
+  }
 
-    if (lastError?.message && lastError.message.includes('not configured')) {
-      return { 
-        success: false, 
-        status: 400, 
-        code: 'AI_KEY_MISSING', 
-        message: 'No AI API Key found. Please add OPENROUTER_API_KEY or GEMINI_API_KEY to server/.env, or enter it in the AI Assistant tab.' 
+  _errorResult(error) {
+    const message = error?.message || 'Unknown error';
+    console.error('[AI] Gemma request failed:', message);
+
+    if (message.includes('not configured')) {
+      return {
+        success: false,
+        status: 400,
+        code: 'AI_KEY_MISSING',
+        message: 'Gemma 4 is not configured. Add GEMINI_API_KEY (Google AI Studio), OPENROUTER_API_KEY or OLLAMA_URL to server/.env, or add your own key in API Key Settings.',
       };
     }
-
-    const status = lastError?.status || lastError?.response?.status;
+    const status = error?.status || error?.response?.status;
     if (status === 401 || status === 403) {
-      return { success: false, status: 503, code: 'AI_AUTH_FAILED', message: `The AI provider rejected the API key: ${lastError?.message || 'Invalid key'}` };
+      return { success: false, status: 503, code: 'AI_AUTH_FAILED', message: `The Gemma provider rejected the API key: ${message}` };
     }
     if (status === 402) {
-      return { success: false, status: 503, code: 'AI_CREDITS_REQUIRED', message: 'The configured AI model needs available provider credits. Choose a funded model or update the provider account.' };
+      return { success: false, status: 503, code: 'AI_CREDITS_REQUIRED', message: 'The configured Gemma endpoint needs provider credits. Use a free Gemma endpoint or top up the provider account.' };
+    }
+    if (status === 404) {
+      return { success: false, status: 503, code: 'AI_MODEL_NOT_FOUND', message: `The Gemma model id was not found on this provider (${message}). Check GEMMA_MODEL / GEMMA_FAST_MODEL.` };
     }
     if (status === 429) {
-      return { success: false, status: 429, code: 'AI_RATE_LIMITED', message: 'The AI provider is rate-limiting requests. Please wait a moment and retry.' };
+      return { success: false, status: 429, code: 'AI_RATE_LIMITED', message: 'Gemma is rate-limiting requests. Please wait a moment and retry.' };
     }
-
-    return { success: false, status: 503, code: 'AI_PROVIDER_UNAVAILABLE', message: `The AI provider failed: ${lastError?.message || 'Unknown error'}` };
+    return { success: false, status: 503, code: 'AI_PROVIDER_UNAVAILABLE', message: `Gemma failed: ${message}` };
   }
 }
 
 module.exports = new ProviderManager();
+module.exports.ProviderManager = ProviderManager;

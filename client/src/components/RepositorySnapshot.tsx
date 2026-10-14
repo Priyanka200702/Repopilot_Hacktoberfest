@@ -3,7 +3,7 @@ import { CheckCircle2, XCircle, Clock, Check, ShieldCheck, Lightbulb, Play } fro
 import { useRepoStore } from '../store/useRepoStore'
 
 export default function RepositorySnapshot() {
-  const { analysis, aiSummary, aiSummaryError, isAiSummaryLoading } = useRepoStore()
+  const { analysis, aiSummary, aiSummaryError, isAiSummaryLoading, fetchAiSummary } = useRepoStore()
 
   if (!analysis) return null
 
@@ -42,16 +42,24 @@ export default function RepositorySnapshot() {
               <h2 className="text-2xl font-bold tracking-tight mb-2">Executive Summary</h2>
               <p className="text-base text-[var(--text-secondary)] leading-relaxed max-w-2xl">
                 {isAiSummaryLoading ? (
-                  <span className="animate-pulse">Generating AI insights...</span>
-                ) : aiSummaryError ? (
-                  <span className="text-rose-600 dark:text-rose-400 flex items-start gap-2">
-                    <span className="font-bold shrink-0">* (Mock AI Fallback) *</span>
-                    The repository analysis was completed successfully, but the AI executive summary generation is unavailable due to API rate limits or exhausted credits. Please update the API configuration to restore AI insights.
-                  </span>
-                ) : (
+                  <span className="animate-pulse">Gemma 4 is writing the summary...</span>
+                ) : aiSummary ? (
                   aiSummary
+                ) : (
+                  summary?.oneLiner || 'Repository analysed.'
                 )}
               </p>
+              {!isAiSummaryLoading && aiSummaryError && (
+                <p className="mt-2 text-xs text-[var(--text-secondary)] flex flex-wrap items-center gap-2" title={aiSummaryError}>
+                  <span>Gemma 4 summary unavailable right now; showing the static summary.</span>
+                  <button
+                    onClick={() => analysis?.meta && fetchAiSummary(analysis.meta.owner, analysis.meta.repo)}
+                    className="underline underline-offset-2 hover:text-[var(--text-primary)] cursor-pointer"
+                  >
+                    Retry
+                  </button>
+                </p>
+              )}
             </div>
 
             <div className="pt-2">

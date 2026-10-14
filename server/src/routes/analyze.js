@@ -112,7 +112,8 @@ router.get('/:owner/:repo/summary', async (req, res) => {
     const aiProvider = req.headers['x-ai-provider'];
     const aiResponse = await ProviderManager.execute('generateExecutiveSummary', analysis, { key: apiKey, provider: aiProvider });
     
-    if (aiResponse.success && aiResponse.data) {
+    // Only a real Gemma answer is stored; a fallback is not shown or saved, so the next visit retries Gemma.
+    if (aiResponse.success && aiResponse.provider === 'gemma' && aiResponse.data) {
       analysis.summary.aiExecutiveSummary = aiResponse.data;
       
       // Update caches
@@ -122,7 +123,7 @@ router.get('/:owner/:repo/summary', async (req, res) => {
       return res.json({ aiExecutiveSummary: aiResponse.data });
     } else {
       // Return null with error, client will handle gracefully
-      return res.json({ aiExecutiveSummary: null, error: aiResponse.message || 'AI summary generation failed' });
+      return res.json({ aiExecutiveSummary: null, error: aiResponse.fallbackReason || aiResponse.message || 'Gemma 4 summary is unavailable right now' });
     }
   } catch (error) {
     console.error(`AI Summary error for ${owner}/${repo}:`, error.message);
@@ -154,7 +155,7 @@ router.get('/:owner/:repo/security-review', async (req, res) => {
     const aiProvider = req.headers['x-ai-provider'];
     const aiResponse = await ProviderManager.execute('generateSecurityReview', analysis, { key: apiKey, provider: aiProvider });
     
-    if (aiResponse.success && aiResponse.data) {
+    if (aiResponse.success && aiResponse.provider === 'gemma' && aiResponse.data) {
       analysis.aiSecurityReview = aiResponse.data;
       
       // Update caches
@@ -164,7 +165,7 @@ router.get('/:owner/:repo/security-review', async (req, res) => {
       return res.json({ aiSecurityReview: aiResponse.data });
     } else {
       // Return null with error, client will handle gracefully
-      return res.json({ aiSecurityReview: null, error: aiResponse.message || 'AI security review generation failed' });
+      return res.json({ aiSecurityReview: null, error: aiResponse.fallbackReason || aiResponse.message || 'Gemma 4 security review is unavailable right now' });
     }
   } catch (error) {
     console.error(`AI Security Review error for ${owner}/${repo}:`, error.message);
@@ -207,7 +208,7 @@ router.post('/:owner/:repo/api-explanation', async (req, res) => {
     const aiProvider = req.headers['x-ai-provider'];
     const aiResponse = await ProviderManager.execute('generateApiExplanation', route, { key: apiKey, provider: aiProvider });
     
-    if (aiResponse.success && aiResponse.data) {
+    if (aiResponse.success && aiResponse.provider === 'gemma' && aiResponse.data) {
       route.aiExplanation = aiResponse.data;
       
       // Update caches
@@ -216,7 +217,7 @@ router.post('/:owner/:repo/api-explanation', async (req, res) => {
       
       return res.json({ aiExplanation: aiResponse.data });
     } else {
-      return res.json({ aiExplanation: null, error: aiResponse.message || 'AI explanation generation failed' });
+      return res.json({ aiExplanation: null, error: aiResponse.fallbackReason || aiResponse.message || 'Gemma 4 explanation is unavailable right now' });
     }
   } catch (error) {
     console.error(`AI API Explanation error for ${owner}/${repo}:`, error.message);

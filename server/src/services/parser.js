@@ -12,13 +12,34 @@ const { buildGithubUrl } = require('../utils/githubUrl');
 const apiPackagesLookup = require('../parser/lookups/apiPackages.json');
 const { extractMetadata } = require('./metadataExtractor');
 const { generateDockerSandbox } = require('../parser/generateDockerSandbox');
+const { isTestOrFixturePath } = require('../utils/filterFiles');
+
+/** Routes found by both extractors (or twice in one file) are counted once; details are merged. */
+function dedupeRoutes(list) {
+  const byKey = new Map();
+  for (const r of list) {
+    // app.use('/api/x', router) mounts a router; it is not an endpoint a caller can hit.
+    if (!r || String(r.method || '').toUpperCase() === 'USE') continue;
+    const key = `${String(r.method || '').toUpperCase()}|${r.path}|${r.file}`;
+    const prev = byKey.get(key);
+    if (!prev) { byKey.set(key, r); continue; }
+    for (const [k, v] of Object.entries(r)) {
+      if (prev[k] === undefined || prev[k] === null || prev[k] === '' || (Array.isArray(prev[k]) && !prev[k].length)) prev[k] = v;
+    }
+  }
+  return [...byKey.values()];
+}
 
 /**
  * Main orchestrator for analyzing a repository.
  * Uses regex-based parsing (no WASM/Tree-sitter needed).
  */
 async function analyzeRepo(owner, repo, filesWithContent, meta, onUpdate) {
-  const routes = [];
+  // Application code only: tests, fixtures and mock data are left out of entry-point,
+  // route, env-var and stack detection (they still appear in the explorer and security scan).
+  const nonTestFiles = filesWithContent.filter(f => !isTestOrFixturePath(f.path));
+  const appFiles = nonTestFiles.length ? nonTestFiles : filesWithContent;
+  let routes = [];
   const envVars = [];
   const apis = [];
   let codeFiles = [];
@@ -55,7 +76,7 @@ async function analyzeRepo(owner, repo, filesWithContent, meta, onUpdate) {
 
     // 3. Detect Entry Point
     try {
-      entryPoint = detectEntryPoint(filesWithContent, packageJson) || entryPoint;
+      entryPoint = detectEntryPoint(appFiles, packageJson) || entryPoint;
     } catch (e) {
       console.warn('detectEntryPoint failed:', e.message);
     }
@@ -77,13 +98,13 @@ async function analyzeRepo(owner, repo, filesWithContent, meta, onUpdate) {
     }
 
     // 5. Regex-based analysis per code file
-    codeFiles = filesWithContent.filter(f =>
+    codeFiles = appFiles.filter(f =>
       f.path.endsWith('.js') || f.path.endsWith('.jsx') ||
       f.path.endsWith('.ts') || f.path.endsWith('.tsx') ||
       f.path.endsWith('.py') || f.path.endsWith('.go') ||
       f.path.endsWith('.rb') || f.path.endsWith('.java')
     );
-    jsTsFiles = filesWithContent.filter(f => 
+    jsTsFiles = appFiles.filter(f => 
       f.path.endsWith('.js') || f.path.endsWith('.jsx') || 
       f.path.endsWith('.ts') || f.path.endsWith('.tsx')
     );
@@ -116,7 +137,7 @@ async function analyzeRepo(owner, repo, filesWithContent, meta, onUpdate) {
     }
 
     // 5.8 Detect CDN-loaded libraries from HTML files
-    const htmlFiles = filesWithContent.filter(f => f.path.endsWith('.html') || f.path.endsWith('.htm'));
+    const htmlFiles = appFiles.filter(f => f.path.endsWith('.html') || f.path.endsWith('.htm'));
     for (const hf of htmlFiles) {
       const content = hf.content.toLowerCase();
       const checkCdn = (keyword, pkg, cat, name) => {
@@ -147,7 +168,8 @@ async function analyzeRepo(owner, repo, filesWithContent, meta, onUpdate) {
 
     // 7. Graph Builder
     try {
-      graph = buildGraph(entryPoint, routes, envVars, apis, fileRoles, filesWithContent) || graph;
+      routes = dedupeRoutes(routes);
+      graph = buildGraph(entryPoint, routes, envVars, apis, fileRoles, appFiles) || graph;
     } catch (e) {
       console.warn('buildGraph failed:', e.message);
     }
@@ -364,11 +386,16 @@ async function analyzeRepo(owner, repo, filesWithContent, meta, onUpdate) {
     // We intentionally don't await this so it runs in the background
     // and streams updates as they finish
     aiPromise = (async () => {
-      const activeLimit = 2; // Keep concurrency low to avoid bursting rate limits
-      // Limit to top 5 architectural files to preserve free-tier RPM quota for executive summaries & chat
+      const activeLimit = 1; // One background Gemma call at a time to stay inside free-tier limits
+      // Limit to the top architectural files (default 5) to preserve free-tier quota for
+      // executive summaries & chat. GEMMA_FILE_DESCRIPTIONS=0 disables this step.
+      // Metadata objects do not carry file content, so look it up from the fetched files.
+      const contentByPath = new Map(filesWithContent.map(f => [f.path, f.content]));
+      const describeLimit = Number(process.env.GEMMA_FILE_DESCRIPTIONS ?? 3);
       const targetFiles = allFilesMetadata
-        .filter(f => f.role !== 'other' && f.role !== 'unknown' && f.content && f.content.length < 15000)
-        .slice(0, 5);
+        .map(f => ({ ...f, content: contentByPath.get(f.path) }))
+        .filter(f => f.role && f.role !== 'other' && f.role !== 'Unknown' && f.role !== 'unknown' && f.content && f.content.length < 15000)
+        .slice(0, Math.max(0, describeLimit));
       
       let index = 0;
       let active = 0;
@@ -383,15 +410,18 @@ async function analyzeRepo(owner, repo, filesWithContent, meta, onUpdate) {
           const metaMatch = allFilesMetadata.find(m => m.path === file.path) || {};
           const compressed = compressContext(file.content, metaMatch);
           
-          const aiResponse = await ProviderManager.execute('generateFileDescription', file.path, compressed);
+          // Background work runs at low priority so it never delays what the user clicks on.
+          const aiResponse = await ProviderManager.execute('generateFileDescription', file.path, compressed, undefined, { priority: 'low' });
           
-          if (aiResponse && aiResponse.success && aiResponse.data) {
+          // Only replace the deterministic description with a real Gemma one; otherwise keep it.
+          if (aiResponse && aiResponse.success && aiResponse.provider === 'gemma' && aiResponse.data) {
+            // Also store it in the cached analysis so the description survives a page reload.
+            const cachedEntry = finalAnalysis.files.find(m => m.path === file.path);
+            if (cachedEntry) cachedEntry.description = aiResponse.data;
             onUpdate({ type: 'file_update', path: file.path, description: aiResponse.data });
-          } else {
-            onUpdate({ type: 'file_update', path: file.path, description: 'AI explanation failed to generate.' });
           }
         } catch (err) {
-          onUpdate({ type: 'file_update', path: file.path, description: 'Error generating AI explanation.' });
+          console.warn(`[Gemma] File description skipped for ${file.path}: ${err.message}`);
         }
 
         active--;
@@ -452,7 +482,7 @@ function detectProjectType(apis, files, packageJson) {
 
 function generateOneLiner(owner, repo, meta, projectType, apis, routes, envVars) {
   const parts = [];
-  parts.push(`A ${projectType}`);
+  parts.push(`${/^[aeiou]/i.test(String(projectType)) ? 'An' : 'A'} ${projectType}`);
 
   if (meta.description) {
     parts[0] = meta.description;

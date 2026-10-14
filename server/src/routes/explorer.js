@@ -140,9 +140,10 @@ router.post('/analyze-line-by-line', async (req, res) => {
     });
   }
 
-  const cacheKey = `detailed-v2:${owner}:${repo}:${sha}:${path}`;
+  // v3: only Gemma results are cached, so an earlier fallback can never stick around.
+  const cacheKey = `detailed-v3:${owner}:${repo}:${sha}:${path}`;
   if (cache.has(cacheKey)) {
-    return res.json({ path, analysis: cache.get(cacheKey) });
+    return res.json({ path, analysis: cache.get(cacheKey), provider: 'gemma', cached: true });
   }
 
   try {
@@ -178,9 +179,17 @@ router.post('/analyze-line-by-line', async (req, res) => {
     const ProviderManager = require('../services/ai/ProviderManager');
     const result = await ProviderManager.execute('generateDetailedAnalysis', path.split('/').pop(), lineNumberedContent, { key: userAiKey, provider: userAiProvider });
 
-    if (result.success) {
+    if (result.success && result.provider === 'gemma') {
       cache.set(cacheKey, result.data);
-      res.json({ path, analysis: result.data });
+      res.json({ path, analysis: result.data, provider: 'gemma' });
+    } else if (result.success) {
+      // Gemma failed; show the static-analysis fallback with the real reason, and do not cache it.
+      res.json({
+        path,
+        analysis: result.data,
+        provider: 'fallback',
+        notice: `Gemma 4 could not finish this analysis (${result.fallbackReason || 'unavailable'}). Showing RepoPilot's static analysis instead. Press retry to ask Gemma again.`,
+      });
     } else {
       res.status(result.status || 503).json({ error: result.message, code: result.code });
     }

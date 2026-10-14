@@ -6,14 +6,15 @@ import { useParams, useSearchParams, useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { Loader2, ArrowLeft, AlertCircle, FileCode, RefreshCw } from 'lucide-react'
 import { useRepoStore } from '../store/useRepoStore'
+import { useVoiceStore } from '../store/useVoiceStore'
 import Navbar from './Navbar'
 import { getDetailedFileAnalysis } from '../lib/api'
 import ReactMarkdown from 'react-markdown'
 
 const loadingTexts = [
-  "Generating AI explanation...",
-  "Analyzing functions...",
-  "Preparing line-by-line walkthrough..."
+  "Gemma 4 is reading the file...",
+  "Explaining the key functions...",
+  "Writing the walkthrough (large files can take up to a minute)..."
 ]
 
 export default function LineByLineAnalysis() {
@@ -23,11 +24,13 @@ export default function LineByLineAnalysis() {
   const sha = searchParams.get('sha')
   const navigate = useNavigate()
 
-  const { aiKey } = useRepoStore()
+  const { aiKey, aiProvider } = useRepoStore()
 
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [analysis, setAnalysis] = useState<string | null>(null)
+  // Set when Gemma could not finish and the server returned its static-analysis fallback.
+  const [fallbackNotice, setFallbackNotice] = useState<string | null>(null)
   const [loadingTextIndex, setLoadingTextIndex] = useState(0)
 
   useEffect(() => {
@@ -48,11 +51,15 @@ export default function LineByLineAnalysis() {
     setLoading(true)
     setError(null)
     setAnalysis(null)
+    setFallbackNotice(null)
     setLoadingTextIndex(0)
 
     try {
-      const response = await getDetailedFileAnalysis(owner, repo, path, sha, aiKey || undefined)
+      const response = await getDetailedFileAnalysis(owner, repo, path, sha, aiKey || undefined, aiProvider || undefined)
       setAnalysis(response.analysis)
+      // Let the voice assistant explain this walkthrough ("explain this file").
+      useVoiceStore.getState().setPageContext({ kind: 'detailed-analysis', path, text: response.analysis })
+      setFallbackNotice(response.provider === 'fallback' ? (response.notice || 'Gemma 4 was unavailable; showing static analysis.') : null)
     } catch (err: any) {
       console.error(err)
       setError(err?.response?.data?.error || 'Unable to reach the analysis service. Please try again.')
@@ -63,13 +70,15 @@ export default function LineByLineAnalysis() {
 
   useEffect(() => {
     fetchAnalysis()
-  }, [owner, repo, path, sha, aiKey])
+  }, [owner, repo, path, sha, aiKey, aiProvider])
+
+  useEffect(() => () => useVoiceStore.getState().setPageContext(null), [])
 
   return (
     <div className="flex-grow flex min-h-screen overflow-hidden relative z-10 flex-col bg-[var(--bg-primary)] text-[var(--text-primary)] font-sans">
       <Navbar onToggleMobileMenu={() => {}} />
 
-      <main className="flex-grow p-4 md:p-6 overflow-y-auto relative grid-bg">
+      <main data-voice-scroll className="flex-grow p-4 md:p-6 overflow-y-auto relative grid-bg">
         <div className="absolute inset-0 scanlines opacity-5 pointer-events-none" />
 
         <div className="max-w-4xl mx-auto space-y-6 relative z-10">
@@ -108,6 +117,20 @@ export default function LineByLineAnalysis() {
                 >
                   <RefreshCw className="w-3.5 h-3.5" />
                   <span>RETRY ANALYSIS</span>
+                </button>
+              </div>
+            )}
+
+            {analysis && !loading && !error && fallbackNotice && (
+              <div className="flex flex-col sm:flex-row sm:items-center gap-3 p-3 rounded-lg border border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300 text-xs font-sans">
+                <AlertCircle className="w-4 h-4 shrink-0" />
+                <span className="flex-1">{fallbackNotice}</span>
+                <button
+                  onClick={fetchAnalysis}
+                  className="flex items-center space-x-1.5 px-3 py-1.5 rounded-md border border-amber-500/40 hover:bg-amber-500/10 text-[10px] font-bold tracking-wider cursor-pointer shrink-0"
+                >
+                  <RefreshCw className="w-3 h-3" />
+                  <span>RETRY WITH GEMMA 4</span>
                 </button>
               </div>
             )}

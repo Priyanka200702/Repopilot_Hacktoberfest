@@ -112,6 +112,20 @@ function isParseableFile(filePath, size = 0) {
   return hasAllowedExt || isDotFile;
 }
 
+// Test suites, fixtures, mocks and sample data describe how the app is TESTED,
+// not how it runs. Counting them made test files look like the entry point,
+// added test-only packages (e.g. mongoose) to the stack and inflated route and
+// env-var counts. They stay in the file explorer and the security scan.
+const TEST_DIRS = /(^|\/)(__tests__|__mocks__|__fixtures__|tests?|specs?|e2e|cypress|playwright|fixtures?|mocks?|testdata|test-data|test_data|examples?|samples?)\//i;
+const TEST_FILES = /(^|\/)([^/]+\.(test|spec|e2e|stories|story|cy)\.[a-z0-9]+|test_[^/]+\.(js|cjs|mjs|ts|py|go|rb)|[^/]+_(test|spec)\.(go|py|js|ts|rb)|conftest\.py|setup-?tests\.[a-z]+|(jest|vitest|karma|playwright|cypress)\.config\.[a-z]+)$/i;
+const MOCK_DATA = /(^|\/)(mock|mocks|fake|dummy|sample|seed)[^/]*\.(json|ya?ml|csv)$/i;
+
+function isTestOrFixturePath(filePath = '') {
+  const p = String(filePath).replace(/\\/g, '/');
+  return TEST_DIRS.test(p) || TEST_FILES.test(p) || MOCK_DATA.test(p);
+}
+
 module.exports = {
-  isParseableFile
+  isParseableFile,
+  isTestOrFixturePath
 };

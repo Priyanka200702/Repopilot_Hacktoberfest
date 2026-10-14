@@ -1,6 +1,16 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { create } from 'zustand'
-import { analyzeRepository, askAiQuestion, getAiSummary, getAiSecurityReview, getApiExplanation } from '../lib/api'
+import { API_BASE_URL, analyzeRepository, askAiQuestion, getAiSummary, getAiSecurityReview, getApiExplanation } from '../lib/api'
+
+// RepoPilot runs on Gemma 4. User keys can be Google AI Studio ("gemini") or OpenRouter keys.
+const GEMMA_KEY_PROVIDERS = ['gemini', 'openrouter']
+const storedProvider = sessionStorage.getItem('repopilot_ai_provider')
+const storedProviderValid = storedProvider !== null && GEMMA_KEY_PROVIDERS.includes(storedProvider)
+if (storedProvider && !storedProviderValid) {
+  // Keys saved for providers RepoPilot no longer uses (e.g. OpenAI, Anthropic) cannot run Gemma.
+  sessionStorage.removeItem('repopilot_ai_key')
+  sessionStorage.removeItem('repopilot_ai_provider')
+}
 
 // -- API Types (matching backend schema) --
 export interface RepoAnalysis {
@@ -203,8 +213,8 @@ export const useRepoStore = create<RepoStore>((set, get) => ({
   ],
   searchQueryFiles: '',
   searchQueryApis: '',
-  aiKey: sessionStorage.getItem('repopilot_ai_key') || null,
-  aiProvider: sessionStorage.getItem('repopilot_ai_provider') || null,
+  aiKey: storedProviderValid ? sessionStorage.getItem('repopilot_ai_key') : null,
+  aiProvider: storedProviderValid ? storedProvider : null,
 
   setCurrentTab: (tab: string) => set({ currentTab: tab }),
   
@@ -222,7 +232,7 @@ export const useRepoStore = create<RepoStore>((set, get) => ({
 
   testAiKey: async (provider: string, key: string) => {
     try {
-      const response = await fetch('http://localhost:3001/api/ai/test-key', {
+      const response = await fetch(`${API_BASE_URL}/ai/test-key`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ provider, key })
@@ -320,7 +330,8 @@ export const useRepoStore = create<RepoStore>((set, get) => ({
       const data = await getAiSummary(owner, repo, aiKey || undefined, aiProvider || undefined)
       set({
         aiSummary: data.aiExecutiveSummary,
-        isAiSummaryLoading: false
+        isAiSummaryLoading: false,
+        aiSummaryError: data.aiExecutiveSummary ? null : (data.error || 'Gemma 4 summary is unavailable right now')
       })
       // Sync the nested summary inside the analysis object
       set((state) => {
@@ -352,7 +363,8 @@ export const useRepoStore = create<RepoStore>((set, get) => ({
       const data = await getAiSecurityReview(owner, repo, aiKey || undefined, aiProvider || undefined)
       set({
         aiSecurityReview: data.aiSecurityReview,
-        isAiSecurityReviewLoading: false
+        isAiSecurityReviewLoading: false,
+        aiSecurityReviewError: data.aiSecurityReview ? null : (data.error || 'Gemma 4 review is unavailable right now')
       })
       // Sync the nested summary inside the analysis object
       set((state) => {
@@ -389,7 +401,7 @@ export const useRepoStore = create<RepoStore>((set, get) => ({
       set((state) => ({
         apiExplanations: {
           ...state.apiExplanations,
-          [key]: { data: data.aiExplanation, isLoading: false, error: null }
+          [key]: { data: data.aiExplanation, isLoading: false, error: data.aiExplanation ? null : (data.error || 'Gemma 4 explanation is unavailable right now') }
         }
       }))
     } catch (error: any) {

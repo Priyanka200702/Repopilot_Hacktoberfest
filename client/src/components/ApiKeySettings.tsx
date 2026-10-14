@@ -12,17 +12,19 @@ interface ApiKeySettingsProps {
 export default function ApiKeySettings({ isOpen, onClose }: ApiKeySettingsProps) {
   const { aiKey, aiProvider, setAiKeyAndProvider, testAiKey } = useRepoStore();
   
-  const [selectedProvider, setSelectedProvider] = useState(aiProvider || 'default');
+  const [selectedProvider, setSelectedProvider] = useState(
+    aiProvider === 'gemini' || aiProvider === 'openrouter' ? aiProvider : 'default'
+  );
   const [tempKey, setTempKey] = useState(aiKey || '');
   const [isTesting, setIsTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
 
+  // Every AI feature in RepoPilot runs on Gemma 4. A user key only changes which
+  // account pays for the Gemma 4 calls, never which model is used.
   const providers = [
-    { id: 'default', name: 'Our AI (Default)', desc: 'Use our hosted AI service with built-in rate limits.', color: 'text-purple-400' },
-    { id: 'gemini', name: 'Google Gemini', desc: 'Direct connection to Google Gemini models (e.g. Gemini 2.0 Flash).', color: 'text-blue-400' },
-    { id: 'openrouter', name: 'OpenRouter', desc: 'Access 100+ models via OpenRouter key.', color: 'text-indigo-400' },
-    { id: 'openai', name: 'OpenAI', desc: 'Direct connection to OpenAI models (e.g. GPT-4o).', color: 'text-emerald-400' },
-    { id: 'anthropic', name: 'Anthropic Claude', desc: 'Direct connection to Anthropic Claude models.', color: 'text-orange-400' }
+    { id: 'default', name: 'RepoPilot Gemma 4 (Default)', desc: 'Use our hosted Gemma 4 with built-in rate limits.', color: 'text-purple-400' },
+    { id: 'gemini', name: 'Google AI Studio key (Gemma 4)', desc: 'Runs Gemma 4 31B on your own Google AI Studio / Gemini API key (starts with "AIza").', color: 'text-blue-400' },
+    { id: 'openrouter', name: 'OpenRouter key (Gemma 4)', desc: 'Runs google/gemma-4-31b-it through your own OpenRouter key (starts with "sk-or-").', color: 'text-indigo-400' }
   ];
 
   const handleTestAndSave = async (e?: React.FormEvent) => {
@@ -103,14 +105,14 @@ export default function ApiKeySettings({ isOpen, onClose }: ApiKeySettingsProps)
               </div>
               <div>
                 <h2 className="text-lg font-bold text-white">API Key Settings</h2>
-                <p className="text-xs text-slate-400 font-mono">Configure your preferred AI provider</p>
+                <p className="text-xs text-slate-400 font-mono">Every AI feature runs on Gemma 4</p>
               </div>
             </div>
 
             <form onSubmit={handleTestAndSave} className="space-y-5">
               <div className="space-y-2">
                 <label className="text-xs font-semibold text-slate-300 uppercase tracking-wider font-mono">
-                  Select Provider
+                  Gemma 4 access
                 </label>
                 <select
                   value={selectedProvider}
@@ -141,7 +143,7 @@ export default function ApiKeySettings({ isOpen, onClose }: ApiKeySettingsProps)
                       setTempKey(e.target.value);
                       setTestResult(null);
                     }}
-                    placeholder={`Enter your ${providers.find(p => p.id === selectedProvider)?.name} API key`}
+                    placeholder={selectedProvider === 'openrouter' ? 'sk-or-v1-...' : 'AIza...'}
                     className="w-full bg-[#161b22] border border-slate-700 hover:border-slate-600 focus:border-cyan-500 rounded-lg px-3 py-2.5 text-sm text-slate-200 placeholder-slate-500 outline-none transition-colors font-mono"
                   />
                   <div className="flex items-start space-x-2 text-[10px] text-slate-400 bg-blue-500/10 border border-blue-500/20 p-2.5 rounded-lg mt-2">

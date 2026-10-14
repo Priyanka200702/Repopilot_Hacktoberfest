@@ -11,23 +11,54 @@ const REASON_BASIS = new Set(['commit_message', 'diff', 'code', 'unknown']);
 const CONFIDENCE = new Set(['high', 'medium', 'low']);
 
 /** Pull the first JSON object out of a model reply (handles ```json fences and chatter). */
+/** Every balanced {...} block in the text (string-aware), in order. */
+function jsonObjectCandidates(body) {
+  const out = [];
+  for (let start = body.indexOf('{'); start !== -1; start = body.indexOf('{', start + 1)) {
+    let depth = 0;
+    let inStr = false;
+    let esc = false;
+    for (let i = start; i < body.length; i++) {
+      const c = body[i];
+      if (inStr) {
+        if (esc) esc = false;
+        else if (c === '\\') esc = true;
+        else if (c === '"') inStr = false;
+        continue;
+      }
+      if (c === '"') inStr = true;
+      else if (c === '{') depth++;
+      else if (c === '}' && --depth === 0) { out.push(body.slice(start, i + 1)); break; }
+    }
+  }
+  return out;
+}
+
+function tryParse(s) {
+  try { return { ok: true, value: JSON.parse(s) }; } catch (_) { /* fall through */ }
+  // One local repair attempt (trailing commas) — never a second model call.
+  try { return { ok: true, value: JSON.parse(s.replace(/,\s*([}\]])/g, '$1')) }; } catch (err) { return { ok: false, error: `invalid JSON: ${err.message}` }; }
+}
+
+/**
+ * Parse the model's JSON answer. Gemma sometimes writes notes or an example
+ * object before the real one, so when the whole text is not JSON the LARGEST
+ * parseable top-level object wins (ties: the later one).
+ */
 function extractJson(text) {
   if (typeof text !== 'string' || !text.trim()) return { ok: false, error: 'empty response' };
-  let body = text.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '');
+  const body = text.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '');
   const start = body.indexOf('{');
   const end = body.lastIndexOf('}');
   if (start === -1 || end <= start) return { ok: false, error: 'no JSON object found' };
-  body = body.slice(start, end + 1);
-  try {
-    return { ok: true, value: JSON.parse(body) };
-  } catch (_) {
-    // One local repair attempt (trailing commas) — never a second model call.
-    try {
-      return { ok: true, value: JSON.parse(body.replace(/,\s*([}\]])/g, '$1')) };
-    } catch (err) {
-      return { ok: false, error: `invalid JSON: ${err.message}` };
-    }
+  const whole = tryParse(body.slice(start, end + 1));
+  if (whole.ok) return whole;
+  let best = null;
+  for (const cand of jsonObjectCandidates(body)) {
+    const r = tryParse(cand);
+    if (r.ok && (!best || cand.length >= best.len)) best = { len: cand.length, r };
   }
+  return best ? best.r : whole;
 }
 
 function clip(value, max) {

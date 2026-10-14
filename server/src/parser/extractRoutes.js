@@ -110,6 +110,9 @@ function extractRoutes(tree, content, filePath) {
       const linesBefore = fileContent.substring(0, match.index).split('\n');
       const line = linesBefore.length;
 
+      // Skip examples in comments ("// app.get('/path', ...)")
+      if (/^\s*(\/\/|\*|\/\*|#)/.test(linesBefore[linesBefore.length - 1])) continue;
+
       // Detect env vars and APIs used in nearby code
       const nearbyContent = fileContent.substring(
         Math.max(0, match.index - 200),

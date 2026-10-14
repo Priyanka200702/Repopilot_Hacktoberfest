@@ -314,9 +314,9 @@ class MockProvider extends BaseProvider {
       }).join('\n\n');
     }
 
-    functionsList += `\n\n> ⚠️ *Fallback static analysis — AI providers are currently rate-limited. Each description is inferred from the actual code inside that function's body, not from a generic template. Re-analyze when API limits reset for full AI explanations.*`;
+    functionsList += `\n\n> Static analysis fallback: Gemma 4 was not available for this request, so each description is inferred from the code inside that function. Retry to get the Gemma 4 walkthrough.`;
 
-    return `## 📄 File Overview\n${summary}\n\n---\n\n## 🛠️ Functions & Classes\n\n${functionsList}`;
+    return `## File Overview\n${summary}\n\n---\n\n## Functions & Classes\n\n${functionsList}`;
   }
 
   async generateFileDescription(fileName, compressedContext, overrideKey) {

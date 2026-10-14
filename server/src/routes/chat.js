@@ -28,7 +28,7 @@ function generateFallbackAnswer(question, analysisJson) {
     return `Here are some of the API routes:\n\n${rts}${extra}`;
   }
 
-  return "I'm in basic mode (no API key provided). I can answer questions about this repo's routes, env vars, APIs, and setup. Try asking about one of those!";
+  return "I'm in basic mode (Gemma 4 is not available right now). I can answer questions about this repo's routes, env vars, APIs, and setup. Try asking about one of those!";
 }
 
 router.post('/', async (req, res) => {
@@ -49,15 +49,18 @@ router.post('/', async (req, res) => {
       return res.status(404).json({ error: 'Repo not analyzed yet. Please analyze first.' });
     }
     
-    // 2. Call AI or fallback
-    // If we have an override key or a backend configured key (AI_PROVIDER is set), try the AI
-    if (apiKey || process.env.GEMINI_API_KEY || process.env.OPENROUTER_API_KEY) {
-      const result = await ProviderManager.execute('answerQuestion', question, analysis, { key: apiKey, provider: aiProvider });
-      if (result.success) {
-        return res.json({ ...result.data, mode: 'advanced' });
-      } else {
-        return res.status(503).json({ error: result.message });
+    // 2. Ask Gemma 4 (the user's own key or the server's Gemma configuration), else basic mode
+    const override = { key: apiKey, provider: aiProvider };
+    if (ProviderManager.isGemmaConfigured(override)) {
+      const result = await ProviderManager.execute('answerQuestion', question, analysis, override);
+      if (!result.success) {
+        return res.status(result.status || 503).json({ error: result.message, code: result.code });
       }
+      if (result.provider === 'gemma') {
+        return res.json({ ...result.data, mode: 'advanced', poweredBy: 'Gemma 4' });
+      }
+      // Gemma failed and the rule-based fallback answered: use the richer basic answer instead.
+      return res.json({ answer: generateFallbackAnswer(question, analysis), citations: [], mode: 'basic', notice: result.fallbackReason });
     } else {
       const result = generateFallbackAnswer(question, analysis);
       return res.json({ answer: result, citations: [], mode: 'basic' });

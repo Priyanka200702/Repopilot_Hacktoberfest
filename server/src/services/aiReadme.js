@@ -1,91 +1,25 @@
-const { GoogleGenerativeAI } = require('@google/generative-ai');
-const axios = require('axios');
-
 /**
- * Generate a clean, comprehensive, human-written README.md based on analysis data
+ * README generation runs on Gemma 4 (via ProviderManager). If Gemma is not
+ * configured or fails, the caller falls back to generateFallbackReadme().
+ *
+ * @param {object} analysisJson repository analysis
+ * @param {{key?: string, provider?: string}|string} [override] user key (BYOK) from request headers
+ * @returns {Promise<string>} README markdown written by Gemma
+ * @throws when Gemma did not produce the README (so the route can use the fallback)
  */
-async function generateReadme(analysisJson, apiKey) {
-  const provider = (process.env.AI_PROVIDER || 'openrouter').toLowerCase();
-  const openRouterKey = (apiKey && apiKey.startsWith('sk-or-v1-')) ? apiKey : process.env.OPENROUTER_API_KEY;
-  const geminiKey = (apiKey && !apiKey.startsWith('sk-or-v1-')) ? apiKey : process.env.GEMINI_API_KEY;
-
-  const systemPrompt = `You are a helpful software engineer writing documentation for your team. Write a clean, natural, human-written README.md for this repository.
-
-REQUIRED SECTIONS:
-1. # [Project Name]
-2. **[Clear 1-sentence summary explaining what the project does at the very top]**
-3. ## About the Project
-   Write engaging, natural paragraphs covering:
-   - ### What the Repository is For: The core goal, target domain, and problem this software solves.
-   - ### What It Is: The architecture, project structure, frontend/backend components, and main modules.
-   - ### How It Works: How data and control flow through the application from the entry point, APIs, and background processes.
-   - ### How It Is Used: Real-world usage, local development workflow, and integration options.
-4. ## Quick Start
-   Clean, practical bash commands for setting up and running the app locally.
-5. ## Environment Variables (if applicable)
-6. ## API Endpoints (if applicable)
-7. ## Tech Stack
-
-STRICT FORMATTING & TONE RULES:
-- Write in a natural, direct, human developer voice.
-- ABSOLUTELY NO EMOJIS, DECORATIVE SYMBOLS, BADGES, OR EM-DASHES anywhere.
-- Do not use robotic intro template language ("This project is designed to...", "In summary").
-- Use standard Markdown headers (# for title, ## for main sections, ### for subsections).
-- Output ONLY raw Markdown without codeblock wrappers or chat conversational intro text.`;
-
-  const userPrompt = `Repository Analysis Data:\n${JSON.stringify(analysisJson, null, 2)}`;
-
-  // 1. Try OpenRouter if configured or key provided
-  if (openRouterKey) {
-    try {
-      const model = process.env.OPENROUTER_MODEL || 'google/gemini-2.0-flash-lite-preview-02-05:free';
-      const response = await axios.post(
-        'https://openrouter.ai/api/v1/chat/completions',
-        {
-          model: model,
-          messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: userPrompt }
-          ]
-        },
-        {
-          timeout: Number(process.env.AI_REQUEST_TIMEOUT_MS || 60000),
-          headers: {
-            'Authorization': `Bearer ${openRouterKey}`,
-            'HTTP-Referer': 'http://localhost:3000',
-            'X-Title': 'RepoPilot',
-            'Content-Type': 'application/json'
-          }
-        }
-      );
-      if (response.data?.choices?.[0]?.message?.content) {
-        let content = response.data.choices[0].message.content.trim();
-        return content.replace(/^```markdown\n?/i, '').replace(/^```\n?/, '').replace(/\n?```$/i, '');
-      }
-    } catch (err) {
-      console.warn('[aiReadme] OpenRouter README generation failed:', err.message);
-    }
+async function generateReadme(analysisJson, override) {
+  const ProviderManager = require('./ai/ProviderManager');
+  const result = await ProviderManager.execute('generateReadme', analysisJson, normalizeOverride(override));
+  if (result.success && result.provider === 'gemma' && result.data) {
+    return result.data;
   }
+  throw new Error(result.success ? 'Gemma unavailable; using structured README' : result.message);
+}
 
-  // 2. Try Gemini if configured or key provided
-  if (geminiKey && !geminiKey.startsWith('sk-or-v1-')) {
-    try {
-      const genAI = new GoogleGenerativeAI(geminiKey);
-      const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
-      const result = await model.generateContent([
-        systemPrompt,
-        { text: userPrompt }
-      ]);
-      let content = result.response.text().trim();
-      return content.replace(/^```markdown\n?/i, '').replace(/^```\n?/, '').replace(/\n?```$/i, '');
-    } catch (err) {
-      console.warn('[aiReadme] Gemini README generation failed:', err.message);
-    }
-  }
-
-  // 3. Fallback to clean human-written structured fallback
-  console.log('[aiReadme] Using structured fallback README generator');
-  return generateFallbackReadme(analysisJson);
+function normalizeOverride(override) {
+  if (!override) return { key: undefined, provider: undefined };
+  if (typeof override === 'string') return { key: override, provider: undefined };
+  return { key: override.key || undefined, provider: override.provider || undefined };
 }
 
 /**

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
@@ -316,6 +316,8 @@ export default function FileTimeMachine({ owner, repo, path, refSha, onClose }: 
   const [step, setStep] = useState(0)
   const [reloadToken, setReloadToken] = useState(0)
   const [showAllCommits, setShowAllCommits] = useState(false)
+  const onCloseRef = useRef(onClose)
+  useEffect(() => { onCloseRef.current = onClose }, [onClose])
 
   useEffect(() => {
     let cancelled = false
@@ -332,10 +334,12 @@ export default function FileTimeMachine({ owner, repo, path, refSha, onClose }: 
   }, [state.status])
 
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
+    // One stable listener that always calls the latest onClose. Re-registering on every
+    // render could drop an Escape press when another listener re-renders the parent mid-event.
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onCloseRef.current() }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [onClose])
+  }, [])
 
   const reload = () => {
     setState({ status: 'loading' })
